@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, Series, Reference
 from collections import OrderedDict
 import datetime
 import csv
@@ -21,8 +22,6 @@ class OutPingData:
 
 # Format of the datetime string from the .csv
 ALPHA_TEST_datetime_format = '%m/%d/%Y %H:%M:%S %p'
-GRAND_datetime_format = '%m/%d/%Y %H:%M'
-
 current_format = ALPHA_TEST_datetime_format
 
 
@@ -31,37 +30,61 @@ alpha_test_begining_date = datetime.datetime(2024, 7, 22).date() # Start of the 
 alpha_test_middle_date = datetime.datetime(2024, 7, 29).date() # Middle of the alpha testing
 alpha_test_end_date = datetime.datetime(2024, 8, 5).date() # End of alpha testing ( 2 weeks )
 
-grand_begining_date = datetime.datetime(2024, 9, 9).date() # Start of the alpha testing
-grand_end_date = datetime.datetime(2024, 9, 15).date() # End of alpha testing ( 2 weeks )
+grand_begining_date = datetime.datetime(2024, 9, 23).date() # Start of the alpha testing
+grand_end_date = datetime.datetime(2024, 9, 29).date() # End of alpha testing ( 2 weeks )
+
+# Checks if a worksheet is empty
+def WorksheetEmpty(worksheet):
+    for row in worksheet.iter_rows():
+        for cell in row:
+            if cell.value is not None:
+                return False
+    return True
+
+def CreateChart(ws):
+    chart1 = BarChart()
+    chart1.type = "col"
+    chart1.style = 10
+    chart1.title = "Bar Chart"
+    chart1.y_axis.title = 'Test number'
+    chart1.x_axis.title = 'Sample length (mm)'
+
+    data = Reference(ws, min_col=2, min_row=1, max_col=3, max_row=4)
+    cats = Reference(ws, min_col=1, min_row=2, max_row=4)
+    chart1.add_data(data, titles_from_data=True)
+    chart1.set_categories(cats)
+    chart1.shape = 4
+    ws.add_chart(chart1, "G1")
 
 def getPings(struct_list, worksheet):
     dict = OrderedDict()
     for struct in struct_list:
-        if struct.device_name not in dict:
-            dict[struct.device_name] = OutPingData(struct.device_name, 0, 0, [])
-            if struct.success == 'TRUE' or struct.success == 'True':
-                dict[struct.device_name].num_true = 1
-                dict[struct.device_name].num_false = 0
-                datetime_msg_sent = datetime.datetime.strptime(struct.msg_sent_date, current_format)
-                datetime_msg_received = datetime.datetime.strptime(struct.msg_received_date, current_format)
-                datetime_time_difference = datetime_msg_received - datetime_msg_sent
-                dict[struct.device_name].response_time.append(datetime_time_difference.total_seconds())
-            else:
-                dict[struct.device_name].num_false = 1
-                dict[struct.device_name].num_true = 0
-        else:
-            if struct.success == 'TRUE' or struct.success == 'True':
-                dict[struct.device_name].num_true = dict[struct.device_name].num_true + 1
-                datetime_msg_sent = datetime.datetime.strptime(struct.msg_sent_date, current_format)
-                datetime_msg_received = datetime.datetime.strptime(struct.msg_received_date, current_format)
-                datetime_time_difference = datetime_msg_received - datetime_msg_sent
-                dict[struct.device_name].response_time.append(datetime_time_difference.total_seconds())
-            else:
-                dict[struct.device_name].num_false = dict[struct.device_name].num_false + 1
-
-
-    list_column_names = ['Device', 'Success Pings', 'Fail Pings', 'Avg. Response Time (s)', 'Avg. Success (%)']
-    worksheet.append(list_column_names)
+        if struct.device_name not in dict: # If the device name has not been added to the dictionary yet
+            datetime_msg_sent = datetime.datetime.strptime(struct.msg_sent_date, current_format)
+            datetime_msg_received = datetime.datetime.strptime(struct.msg_received_date, current_format)
+            if (datetime_msg_received.date() >= grand_begining_date) and (datetime_msg_received.date() <= grand_end_date): # If the msg. received date is within the time period
+                dict[struct.device_name] = OutPingData(struct.device_name, 0, 0, [])
+                if struct.success == 'TRUE' or struct.success == 'True': # If the ping returned successful
+                    dict[struct.device_name].num_true = 1
+                    dict[struct.device_name].num_false = 0
+                    datetime_time_difference = datetime_msg_received - datetime_msg_sent
+                    dict[struct.device_name].response_time.append(datetime_time_difference.total_seconds())
+                else: # The Ping was not successful
+                    dict[struct.device_name].num_false = 1
+                    dict[struct.device_name].num_true = 0
+        else: # The device name already exists within the dictionary
+            datetime_msg_sent = datetime.datetime.strptime(struct.msg_sent_date, current_format)
+            datetime_msg_received = datetime.datetime.strptime(struct.msg_received_date, current_format)
+            if (datetime_msg_received.date() >= grand_begining_date) and (datetime_msg_received.date() <= grand_end_date): # If the msg. received date is within the time period
+                if struct.success == 'TRUE' or struct.success == 'True': # If the ping returned successful
+                    dict[struct.device_name].num_true = dict[struct.device_name].num_true + 1
+                    datetime_time_difference = datetime_msg_received - datetime_msg_sent
+                    dict[struct.device_name].response_time.append(datetime_time_difference.total_seconds())
+                else: # The Ping was not successful
+                    dict[struct.device_name].num_false = dict[struct.device_name].num_false + 1
+    if len(dict) > 0:
+        list_column_names = ['Device', 'Success Pings', 'Fail Pings', 'Avg. Response Time (s)', 'Avg. Success (%)']
+        worksheet.append(list_column_names)
 
     for device, value in dict.items():
         list_row = [float(device)] # Device name
@@ -122,7 +145,7 @@ def Mesh_Status(usable_data, main_wb, device_list, sheet_name):
     # total_num_days = alpha_test_end_date - alpha_test_begining_date
     total_num_days = grand_end_date - grand_begining_date
 
-    column_names = ['Device', 'Success Pings', 'Missing Pings', 'Avg. Success (%)']
+    column_names = ['Device', 'Successful Response(s)', 'Missing Response(s)', 'Avg. Success (%)']
     mesh_ws.append(column_names)
     
     for device in device_list:
@@ -139,57 +162,12 @@ def Mesh_Status(usable_data, main_wb, device_list, sheet_name):
         mesh_ws.append(row_list)
 
 def OutgoingPingRequestNotification(usable_data, main_wb, sheet_name):
-    # Extracting and breaking apart the data further...
-    list_outgoing_ping_request = usable_data['OutgoingPingRequestNotification'] # Extracting 'OutgoingPingRequestNotification' (list of CellData objects)
-
-    list_outgoing_ping_request.sort(key=lambda x: float(x.device_name)) # Sorting the list by device name
-
-    dict_outgoing_pings = OrderedDict()
-    for struct in list_outgoing_ping_request:
-        if struct.device_name not in dict_outgoing_pings:
-            dict_outgoing_pings[struct.device_name] = OutPingData(struct.device_name, 0, 0, [])
-            if struct.success == 'TRUE' or struct.success == 'True':
-                dict_outgoing_pings[struct.device_name].num_true = 1
-                dict_outgoing_pings[struct.device_name].num_false = 0
-                
-                # Adding the response time to the list for this device
-                datetime_msg_sent = datetime.datetime.strptime(struct.msg_sent_date, current_format)
-                datetime_msg_received = datetime.datetime.strptime(struct.msg_received_date, current_format)
-                datetime_time_difference = datetime_msg_received - datetime_msg_sent
-                dict_outgoing_pings[struct.device_name].response_time.append(datetime_time_difference.total_seconds())
-            else:
-                dict_outgoing_pings[struct.device_name].num_false = 1
-                dict_outgoing_pings[struct.device_name].num_true = 0
-        else:
-            if struct.success == 'TRUE' or struct.success == 'True':
-                dict_outgoing_pings[struct.device_name].num_true = dict_outgoing_pings[struct.device_name].num_true + 1
-
-                # Adding the response time to the list for this device
-                datetime_msg_sent = datetime.datetime.strptime(struct.msg_sent_date, current_format)
-                datetime_msg_received = datetime.datetime.strptime(struct.msg_received_date, current_format)
-                datetime_time_difference = datetime_msg_received - datetime_msg_sent
-                dict_outgoing_pings[struct.device_name].response_time.append(datetime_time_difference.total_seconds())
-            else:
-                dict_outgoing_pings[struct.device_name].num_false = dict_outgoing_pings[struct.device_name].num_false + 1
-
-    pings_ws = main_wb.create_sheet(sheet_name)
-
-    list_column_names = ['Device', 'Success Pings', 'Fail Pings', 'Avg. Success (%)', 'Avg. Response Time (s)']
-    pings_ws.append(list_column_names)
-
-    for device, value in dict_outgoing_pings.items():
-        list_row = [float(device)] # Device
-        list_row.append(value.num_true) # Success Pings
-        list_row.append(value.num_false) # Fail Pings
-        list_row.append(round((value.num_true / (value.num_true + value.num_false) * 100), 2)) # Avg. Success (%)
-        if len(value.response_time) == 0: # Avg. Response Time (s)
-            list_row.append(0)
-        else:
-            total_response_time = 0
-            for i in value.response_time:
-                total_response_time = total_response_time + i
-            list_row.append(total_response_time / len(value.response_time))
-        pings_ws.append(list_row) # Writing to worksheet
+    struct_list = usable_data['OutgoingPingRequestNotification'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
 
 def export_msg_ctr_sync_response_to_file(usable_data, sheet_name):
     # Extracting and breaking apart the data further...
@@ -201,35 +179,239 @@ def OutgoingMeshDeviceDiagnosticRequest(usable_data, main_wb, sheet_name):
     # Extracting and breaking apart the data further...
     list_diagnostic_request_data = usable_data['OutgoingMeshDeviceDiagnosticRequest'] # Extracting 'OutgoingMeshDeviceDiagnosticRequest' (list of CellData objects)
     list_diagnostic_request_data.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
-    Request_ws = main_wb.create_sheet(sheet_name)
-    getPings(list_diagnostic_request_data, Request_ws)
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(list_diagnostic_request_data, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
 
 def Open(usable_data, main_wb, sheet_name):
     struct_list = usable_data['Open'] # Extracting 'Open' (list of CellData objects)
     struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
-    Request_ws = main_wb.create_sheet(sheet_name)
-    getPings(struct_list, Request_ws)
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
 
 def Close(usable_data, main_wb, sheet_name):
     struct_list = usable_data['Close'] # Extracting 'Open' (list of CellData objects)
     struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
-    Request_ws = main_wb.create_sheet(sheet_name)
-    getPings(struct_list, Request_ws)
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
 
 def OpenAndClose(usable_data, main_wb, sheet_name):
     struct_list = usable_data['OpenAndClose'] # Extracting 'Open' (list of CellData objects)
     struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
-    Request_ws = main_wb.create_sheet(sheet_name)
-    getPings(struct_list, Request_ws)
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
 
 def OutgoingLockingPlanReadAuditRequest(usable_data, main_wb, sheet_name):
     struct_list = usable_data['OutgoingLockingPlanReadAuditRequest'] # Extracting 'Open' (list of CellData objects)
     struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
-    Request_ws = main_wb.create_sheet(sheet_name)
-    getPings(struct_list, Request_ws)
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
 
 def OutgoingLockingPlanAuditPointerRequest(usable_data, main_wb, sheet_name):
     struct_list = usable_data['OutgoingLockingPlanAuditPointerRequest'] # Extracting 'Open' (list of CellData objects)
     struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
-    Request_ws = main_wb.create_sheet(sheet_name)
-    getPings(struct_list, Request_ws)
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingTraceRtRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingTraceRtRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanStateRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanStateRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanDSTReadRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanDSTReadRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingMeshEventNodeIdsRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingMeshEventNodeIdsRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def LockBlockUnblock(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['LockBlockUnblock'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingMasterUserCancelRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingMasterUserCancelRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingCardErrorDiagnoseRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingCardErrorDiagnoseRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingMeshStatusWindowRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingMeshStatusWindowRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanProgrammingRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanProgrammingRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanCalendarRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanCalendarRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanAutomaticChangesRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanAutomaticChangesRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanShiftsRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanShiftsRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanMasterCardKeycodesRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanMasterCardKeycodesRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanGuestCardKeycodeRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanGuestCardKeycodeRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanSpecialCardKeycodesRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanSpecialCardKeycodesRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanRtcRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanRtcRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanPriorityMsgConfigRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanPriorityMsgConfigRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanGeneralRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanGeneralRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockDiagnosticGetRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockDiagnosticGetRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingLockingPlanRTCReadRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingLockingPlanRTCReadRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def OutgoingMFGDateRequest(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['OutgoingMFGDateRequest'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def LockingPlanRead(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['LockingPlanRead'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def ModifyStayDeviceSource(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['ModifyStayDeviceSource'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
+
+def ModifyStayDeviceDestination(usable_data, main_wb, sheet_name):
+    struct_list = usable_data['ModifyStayDeviceDestination'] # Extracting 'Open' (list of CellData objects)
+    struct_list.sort(key=lambda x: (x.device_name)) # Sorting the list by device name
+    ws = main_wb.create_sheet(sheet_name)
+    getPings(struct_list, ws)
+    if WorksheetEmpty(ws):
+        del main_wb[sheet_name]
